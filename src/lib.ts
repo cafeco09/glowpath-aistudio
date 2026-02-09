@@ -27,89 +27,61 @@ export type PlaceCandidate = {
   risk_level?: RiskLevel;
 };
 
-const PLACES_TEXT_URL = "https://places.googleapis.com/v1/places:searchText";
-const PLACES_NEARBY_URL = "https://places.googleapis.com/v1/places:searchNearby";
+const BACKEND_URL = "https://glowpath-backend-256981057579.europe-west2.run.app";
 
-export async function placeTextSearch(apiKey: string, query: string): Promise<PlaceCandidate | null> {
-  const res = await fetch(PLACES_TEXT_URL, {
+export async function placeTextSearch(_apiKey: string, query: string): Promise<PlaceCandidate | null> {
+  const res = await fetch(`${BACKEND_URL}/place/text`, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "X-Goog-Api-Key": apiKey,
-      "X-Goog-FieldMask": "places.id,places.displayName,places.formattedAddress,places.location"
-    },
-    body: JSON.stringify({ textQuery: query, maxResultCount: 1 })
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ query })
   });
 
-  if (!res.ok) throw new Error(`Places Text Search failed (${res.status})`);
-  const data = await res.json();
-  const p = data?.places?.[0];
-  if (!p?.location) return null;
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error(`Backend place/text failed (${res.status})`);
 
+  const p = await res.json();
   return {
-    name: p.displayName?.text ?? query,
-    address: p.formattedAddress,
-    location: { lat: p.location.latitude, lng: p.location.longitude },
-    placeId: p.id
+    name: p.name ?? query,
+    address: p.address,
+    location: { lat: p.location.lat, lng: p.location.lng },
+    placeId: p.placeId
   };
 }
 
-export async function nearbyCandidates(apiKey: string, center: LatLng, radiusM: number): Promise<PlaceCandidate[]> {
-  const res = await fetch(PLACES_NEARBY_URL, {
+export async function nearbyCandidates(_apiKey: string, center: LatLng, radiusM: number): Promise<PlaceCandidate[]> {
+  const res = await fetch(`${BACKEND_URL}/place/nearby`, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "X-Goog-Api-Key": apiKey,
-      "X-Goog-FieldMask": "places.id,places.displayName,places.formattedAddress,places.location"
-    },
-    body: JSON.stringify({
-      locationRestriction: {
-        circle: { center: { latitude: center.lat, longitude: center.lng }, radius: radiusM }
-      },
-      includedTypes: ["cafe", "restaurant", "convenience_store", "transit_station"],
-      maxResultCount: 12
-    })
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ center, radius_m: radiusM, max_results: 12 })
   });
 
-  if (!res.ok) throw new Error(`Places Nearby failed (${res.status})`);
+  if (!res.ok) throw new Error(`Backend place/nearby failed (${res.status})`);
   const data = await res.json();
-  const places = (data?.places ?? []) as any[];
 
-  return places
-    .filter((p) => p?.location)
-    .map((p) => ({
-      name: p.displayName?.text ?? "Unknown",
-      address: p.formattedAddress,
-      location: { lat: p.location.latitude, lng: p.location.longitude },
-      placeId: p.id
-    }));
+  return (data ?? []).map((p: any) => ({
+    name: p.name ?? "Unknown",
+    address: p.address,
+    location: { lat: p.location.lat, lng: p.location.lng },
+    placeId: p.placeId
+  }));
 }
 
-export async function fetchCrimeoMeterCsi(apiKey: string, lat: number, lng: number, distanceM: number): Promise<number> {
-  const end = new Date();
-  const start = new Date(end.getTime() - 30 * 24 * 60 * 60 * 1000);
+export async function fetchCrimeoMeterCsi(_apiKey: string, lat: number, lng: number, distanceM: number): Promise<number> {
+  const url = new URL(`${BACKEND_URL}/crime/csi`);
+  url.searchParams.set("lat", String(lat));
+  url.searchParams.set("lng", String(lng));
+  url.searchParams.set("distance_m", String(distanceM));
+  url.searchParams.set("days", "30");
 
-  const url =
-    `https://api.crimeometer.com/v2/incidents/stats` +
-    `?lat=${encodeURIComponent(lat)}` +
-    `&lon=${encodeURIComponent(lng)}` +
-    `&datetime_ini=${encodeURIComponent(start.toISOString())}` +
-    `&datetime_end=${encodeURIComponent(end.toISOString())}` +
-    `&distance=${encodeURIComponent(distanceM)}`;
+  const res = await fetch(url.toString());
+  if (!res.ok) throw new Error(`Backend crime/csi failed (${res.status})`);
 
-  const res = await fetch(url, {
-    headers: { "Content-Type": "application/json", "x-api-key": apiKey }
-  });
-
-  if (!res.ok) throw new Error(`CrimeoMeter failed (${res.status})`);
   const data = await res.json();
-
   const csi = Number(data?.csi);
-  if (Number.isFinite(csi)) return Math.max(0, Math.min(100, csi));
-  throw new Error("CrimeoMeter response missing csi");
+  if (!Number.isFinite(csi)) throw new Error("Backend response missing csi");
+  return csi;
 }
 
-// ---------- Deterministic scoring (stable demo) ----------
 export function lightingScoreFromRadiance(r: number): number {
   const rad = Math.max(0, r);
   if (rad < 0.5) return 15;
@@ -136,7 +108,6 @@ export function riskLevelFromVibe(v: number): RiskLevel {
   return "UNSAFE";
 }
 
-// ---------- Gemini classification (schema-enforced) ----------
 const outputSchema = z.object({
   risk_level: z.enum(["SAFE", "CAUTION", "UNSAFE"]),
   classification: z.enum(["SAFE", "UNSAFE", "SOCIAL_BALANCED", "INFRA_MISMATCH", "UNCERTAIN"]),
@@ -150,7 +121,6 @@ export async function geminiClassify(args: {
   vibe_score: number;
   lighting_score: number;
 }): Promise<{ risk_level: RiskLevel; classification: Classification; confidence: number; rationale: string }> {
-  // AI Studio injects Gemini auth for the app; keep empty object here.
   const ai = new GoogleGenAI({});
 
   const prompt = `
