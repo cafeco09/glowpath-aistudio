@@ -27,6 +27,7 @@ export type PlaceCandidate = {
   risk_level?: RiskLevel;
 };
 
+// ✅ Live Cloud Run backend
 const BACKEND_URL = "https://glowpath-backend-256981057579.europe-west2.run.app";
 
 export async function placeTextSearch(_apiKey: string, query: string): Promise<PlaceCandidate | null> {
@@ -82,6 +83,7 @@ export async function fetchCrimeoMeterCsi(_apiKey: string, lat: number, lng: num
   return csi;
 }
 
+// ---------- Deterministic scoring ----------
 export function lightingScoreFromRadiance(r: number): number {
   const rad = Math.max(0, r);
   if (rad < 0.5) return 15;
@@ -108,6 +110,7 @@ export function riskLevelFromVibe(v: number): RiskLevel {
   return "UNSAFE";
 }
 
+// ---------- Gemini classification ----------
 const outputSchema = z.object({
   risk_level: z.enum(["SAFE", "CAUTION", "UNSAFE"]),
   classification: z.enum(["SAFE", "UNSAFE", "SOCIAL_BALANCED", "INFRA_MISMATCH", "UNCERTAIN"]),
