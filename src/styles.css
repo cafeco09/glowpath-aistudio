@@ -27,3 +27,19 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 .hint { color: #a8b3c2; font-size: 12px; margin: 8px 0 0; }
 .footer { margin-top: 14px; }
 @media (max-width: 760px) { .grid2 { grid-template-columns: 1fr; } .buttons { flex-direction: column; } }
+
+/* Time-aware UI helpers */
+.resultCard { margin-top: 16px; padding: 16px; border: 1px solid rgba(0,0,0,.08); border-radius: 16px; }
+.resultTop { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; align-items: start; }
+.big { font-size: 28px; font-weight: 700; line-height: 1.1; }
+.pill { display: inline-block; padding: 6px 10px; border-radius: 999px; font-weight: 700; letter-spacing: .3px; font-size: 12px; }
+.pill-safe { background: rgba(0,128,0,.12); }
+.pill-caution { background: rgba(255,165,0,.18); }
+.pill-unsafe { background: rgba(255,0,0,.12); }
+.grid3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
+.kv .k { font-weight: 700; margin-bottom: 6px; }
+.kv .v { font-size: 16px; }
+.divider { height: 1px; background: rgba(0,0,0,.08); margin: 14px 0; }
+.toggleRow { display: flex; gap: 10px; align-items: center; }
+pre.json { max-height: 280px; overflow: auto; }
+.altRight { display: flex; gap: 10px; align-items: center; }

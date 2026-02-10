@@ -1,4 +1,3 @@
-import { GoogleGenAI } from "@google/genai";
 import { z } from "zod";
 import { zodToJsonSchema } from "zod-to-json-schema";
 
@@ -19,6 +18,8 @@ export type GlowPathResult = {
 };
 
 export type PlaceCandidate = {
+  open_at_time?: boolean | null;
+  hours_known?: boolean;
   name: string;
   address?: string;
   location: LatLng;
@@ -49,23 +50,26 @@ export async function placeTextSearch(_apiKey: string, query: string): Promise<P
   };
 }
 
-export async function nearbyCandidates(_apiKey: string, center: LatLng, radiusM: number): Promise<PlaceCandidate[]> {
-  const res = await fetch(`${BACKEND_URL}/place/nearby`, {
+export async function nearbyCandidates(_apiKey: string, center: LatLng, radiusM: number, whenIso?: string): Promise<PlaceCandidate[]> {
+  const res = await fetch(`${BACKEND_URL}/place/nearby_open`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ center, radius_m: radiusM, max_results: 12 })
+    body: JSON.stringify({ center, radius_m: radiusM, max_results: 12, when_iso: whenIso ?? null })
   });
 
-  if (!res.ok) throw new Error(`Backend place/nearby failed (${res.status})`);
+  if (!res.ok) throw new Error(`Backend place/nearby_open failed (${res.status})`);
   const data = await res.json();
 
   return (data ?? []).map((p: any) => ({
     name: p.name ?? "Unknown",
     address: p.address,
     location: { lat: p.location.lat, lng: p.location.lng },
-    placeId: p.placeId
+    placeId: p.placeId,
+    hours_known: Boolean(p.hours_known),
+    open_at_time: (p.open_at_time === true ? true : (p.open_at_time === false ? false : null))
   }));
 }
+
 
 export async function fetchCrimeoMeterCsi(_apiKey: string, lat: number, lng: number, distanceM: number): Promise<number> {
   const url = new URL(`${BACKEND_URL}/crime/csi`);
@@ -110,53 +114,33 @@ export function riskLevelFromVibe(v: number): RiskLevel {
   return "UNSAFE";
 }
 
-// ---------- Gemini classification ----------
-const outputSchema = z.object({
-  risk_level: z.enum(["SAFE", "CAUTION", "UNSAFE"]),
-  classification: z.enum(["SAFE", "UNSAFE", "SOCIAL_BALANCED", "INFRA_MISMATCH", "UNCERTAIN"]),
-  confidence: z.number().min(0).max(1),
-  rationale: z.string().max(240)
-});
 
+
+// ---------- Classification (server-side: Gemini primary, OpenAI fallback) ----------
 export async function geminiClassify(args: {
   csi: number;
   radiance: number;
   vibe_score: number;
   lighting_score: number;
 }): Promise<{ risk_level: RiskLevel; classification: Classification; confidence: number; rationale: string }> {
-  const ai = new GoogleGenAI({});
-
-  const prompt = `
-You are GlowPath SafetyClassifier.
-
-Signals:
-- CSI (0-100, higher = higher risk): ${args.csi.toFixed(2)}
-- Night-light radiance (proxy, noisy): ${args.radiance.toFixed(4)}
-- Precomputed: vibe_score=${args.vibe_score}, lighting_score=${args.lighting_score}
-
-Rules:
-- If CSI>=70 and lighting_score>=60 -> SOCIAL_BALANCED
-- If CSI<=60 and lighting_score<=35 -> INFRA_MISMATCH
-- If CSI>=70 and lighting_score<=35 -> UNSAFE
-- If CSI<=35 and lighting_score>=60 -> SAFE
-- Else -> UNCERTAIN
-
-Hard constraints:
-- risk_level MUST match vibe_score thresholds: SAFE>=65, CAUTION 40-64, UNSAFE<40
-- rationale <= 240 chars; mention CSI + lighting plainly.
-Return JSON only.
-`.trim();
-
-  const resp = await ai.models.generateContent({
-    model: "gemini-3-flash-preview",
-    contents: prompt,
-    config: {
-      responseMimeType: "application/json",
-      responseJsonSchema: zodToJsonSchema(outputSchema)
-    }
+  const res = await fetch(`${BACKEND_URL}/gemini/classify`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(args)
   });
 
-  return outputSchema.parse(JSON.parse(resp.text));
+  if (!res.ok) {
+    const txt = await res.text().catch(() => "");
+    throw new Error(`Backend gemini/classify failed (${res.status}) ${txt.slice(0, 200)}`);
+  }
+
+  const out: any = await res.json();
+  return {
+    risk_level: out.risk_level,
+    classification: out.classification,
+    confidence: Number(out.confidence ?? 0.55),
+    rationale: String(out.rationale ?? "").slice(0, 240)
+  };
 }
 
 export function assembleFinalResult(params: {
